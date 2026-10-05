@@ -50,7 +50,7 @@ query:
 	cd backend && source ../.venv/bin/activate && python -m scrag.cli.main query "$(Q)"
 
 benchmark:
-	cd backend && source ../.venv/bin/activate && python -m scrag.cli.main benchmark
+	cd backend && source ../.venv/bin/activate && python -m scrag.eval.benchmark
 
 test:
 	cd backend && source ../.venv/bin/activate && pytest -v
