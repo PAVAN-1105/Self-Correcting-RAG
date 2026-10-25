@@ -8,7 +8,7 @@ from rich.table import Table
 
 from scrag.config import SCRAGSettings, get_settings
 from scrag.graph.workflow import SelfCorrectingRAGApp
-from scrag.state import create_initial_state
+from scrag.state import KnowledgeStrip, RetrievalAction, create_initial_state
 from scrag.retrieval.hybrid import HybridRetriever
 from scrag.retrieval.loaders import DocumentChunk
 
@@ -56,7 +56,17 @@ class PureSelfRAGBaseline:
         state = create_initial_state(question=question, max_retries=2)
         
         state.update(self.nodes.retrieve(state))
-        
+
+        # No CRAG refinement: whole retrieved chunks are the generation context
+        state["knowledge_strips"] = [
+            KnowledgeStrip(
+                strip_id=doc["chunk_id"],
+                source=doc.get("metadata", {}).get("source", "internal"),
+                content=doc["content"],
+            ).model_dump()
+            for doc in state.get("raw_documents", [])
+        ]
+
         while state.get("retry_count", 0) <= 2:
             state.update(self.nodes.generate_answer(state))
             state.update(self.nodes.critique_output(state))
@@ -78,12 +88,13 @@ class PureSelfRAGBaseline:
             "question": question,
             "generation": state.get("generation"),
             "citations": state.get("citations", []),
-            "retrieved_count": len(state.get("retrieved_documents", [])),
+            "retrieved_count": len(state.get("raw_documents", [])),
             "noise_filtered": False,
             "web_fallback_used": False,
             "reflection_performed": True,
             "elapsed_seconds": round(elapsed, 3),
-            "status": state.get("status")
+            "status": state.get("status"),
+            "retry_count": state.get("retry_count", 0),
         }
 
 class PureCRAGBaseline:
@@ -99,10 +110,10 @@ class PureCRAGBaseline:
         state.update(self.nodes.grade_documents(state))
         
         action = state.get("retrieval_action")
-        if action in ["refine_internal", "refine_then_web"]:
+        if action in [RetrievalAction.CORRECT.value, RetrievalAction.AMBIGUOUS.value]:
             state.update(self.nodes.refine_internal(state))
-            
-        if action in ["rewrite_query", "refine_then_web"]:
+
+        if action in [RetrievalAction.INCORRECT.value, RetrievalAction.AMBIGUOUS.value]:
             state.update(self.nodes.rewrite_query(state))
             state.update(self.nodes.web_search(state))
             
@@ -114,8 +125,8 @@ class PureCRAGBaseline:
             "question": question,
             "generation": state.get("generation"),
             "citations": state.get("citations", []),
-            "retrieved_count": len(state.get("retrieved_documents", [])),
-            "noise_filtered": action in ["refine_internal", "refine_then_web"],
+            "retrieved_count": len(state.get("raw_documents", [])),
+            "noise_filtered": action in [RetrievalAction.CORRECT.value, RetrievalAction.AMBIGUOUS.value],
             "web_fallback_used": state.get("web_search_needed", False),
             "reflection_performed": False,
             "elapsed_seconds": round(elapsed, 3),
